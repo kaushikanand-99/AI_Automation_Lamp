@@ -1,0 +1,547 @@
+{
+  "name": "AI Email Triage + Smart Notification System",
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyHour",
+              "minute": {}
+            }
+          ]
+        },
+        "filters": {}
+      },
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -1760,
+        -240
+      ],
+      "id": "b5d3fef0-5f1a-4a9a-9532-c54a98488629",
+      "name": "Gmail Trigger",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "fnAZzORXXZOEZ4GW",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "={\n  \"from\": \"{{ $json.From.match(/<(.+)>/)?.[1] || $json.From }}\",\n  \"name\": \"{{ $json.From.split('<')[0].trim() }}\",\n  \"subject\": \"{{ $json.Subject }}\",\n  \"body\": \"{{ $json['text'] || $json['snippet'] }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -1520,
+        -240
+      ],
+      "id": "9f749213-94fc-4cd0-bdb2-e95a0b954d12",
+      "name": "Mail Content Structure"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Analyze this email. Reply ONLY with valid JSON, no markdown.\n\nFrom: {{ $json.from }}\nName: {{ $json.name }}\nSubject: {{ $json.subject }}\nBody: {{ $json.body }}\n\nReturn exactly:\n{\n  \"priority\": \"urgent | action | fyi | ignore\",\n  \"summary\": \"one line summary under 20 words\",\n  \"suggested_action\": \"what the user should do next\"\n}\n\nPriority rules:\n- urgent: needs reply within 1 hour\n- action: needs reply but not immediately\n- fyi: informational only\n- ignore: newsletters, promos, automated emails",
+        "messages": {
+          "messageValues": [
+            {
+              "type": "HumanMessagePromptTemplate",
+              "message": "=Analyze this email. Reply ONLY with valid JSON, no markdown.\n\nFrom: {{ $json.from }}\nName: {{ $json.name }}\nSubject: {{ $json.subject }}\nBody: {{ $json.body }}\n\nReturn exactly:\n{\n  \"priority\": \"urgent | action | fyi | ignore\",\n  \"summary\": \"one line summary under 20 words\",\n  \"suggested_action\": \"what the user should do next\"\n}\n\nPriority rules:\n- urgent: needs reply within 1 hour\n- action: needs reply but not immediately\n- fyi: informational only\n- ignore: newsletters, promos, automated emails"
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        -560,
+        656
+      ],
+      "id": "244062b2-e3df-4c35-995b-84cf9d985e59",
+      "name": "Basic LLM Chain"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "claude-haiku-4-5-20251001",
+          "mode": "list",
+          "cachedResultName": "Claude Haiku 4.5"
+        },
+        "options": {
+          "maxTokensToSample": 500
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatAnthropic",
+      "typeVersion": 1.5,
+      "position": [
+        -560,
+        880
+      ],
+      "id": "85777e3b-0f80-43a6-b44c-4ea9aec165a2",
+      "name": "Anthropic Chat Model",
+      "credentials": {
+        "anthropicApi": {
+          "id": "TrOpZIK7ju4BKb7w",
+          "name": "Anthropic account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.item.json.text || '';\n\nconst cleaned = raw\n  .replace(/```json/g, '')\n  .replace(/```/g, '')\n  .trim();\n\nconst parsed = JSON.parse(cleaned);\n\nreturn {\n  priority:         parsed.priority,\n  summary:          parsed.summary,\n  suggested_action: parsed.suggested_action,\n  from:             $('Mail Content Structure').item.json.name,\n  email:            $('Mail Content Structure').item.json.from,\n  subject:          $('Mail Content Structure').item.json.subject\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -96,
+        656
+      ],
+      "id": "e3c9fb1f-b6aa-44c5-aed0-0921745cd589",
+      "name": "Formatting of Claude Output"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4O-MINI"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "system",
+              "content": "=You are an email classification assistant.\n\nSTRICT RULES:\n\nHIGH:\n- Contains words like: urgent, asap, deadline, immediate\n- Requests action\n\nMEDIUM:\n- Work-related but not urgent\n\nLOW:\n- Promotions, newsletters, informational\n\nReturn ONLY JSON:\n{\n  \"category\": \"\",\n  \"priority\": \"High | Medium | Low\",\n  \"summary\": \"\"\n}"
+            },
+            {
+              "content": "=Email Details:\n\nFrom: {{$json[\"from\"]}}\nName: {{$json[\"name\"]}}\nSubject: {{$json[\"subject\"]}}\nBody: {{$json[\"body\"]}}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "maxTokens": 500
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        -1264,
+        -240
+      ],
+      "id": "21d5a92e-9f75-42cc-b601-bd52ab55cdb8",
+      "name": "Message a model",
+      "credentials": {
+        "openAiApi": {
+          "id": "bxpGM01VtW3A4YBc",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Get AI raw response\nconst raw = $json.output?.[0]?.content?.[0]?.text || \"{}\";\n\n// 2. Clean markdown if present\nconst cleaned = raw.replace(/```json|```/g, \"\").trim();\n\nlet aiData;\n\n// 3. Safe JSON parsing\ntry {\n  aiData = JSON.parse(cleaned);\n} catch (e) {\n  aiData = {\n    category: \"Unknown\",\n    priority: \"Medium\",\n    summary: \"AI response parsing failed\"\n  };\n}\n\n// 4. Get original email safely\nconst original = $items(\"Mail Content Structure\")?.[0]?.json || {};\n\n// 5. Override priority logic (safe)\nif (\n  original?.subject?.toLowerCase()?.includes(\"urgent\") ||\n  original?.body?.toLowerCase()?.includes(\"asap\")\n) {\n  aiData.priority = \"High\";\n}\n\n// 6. Merge everything\nreturn [\n  {\n    json: {\n      ...original,\n      ...aiData\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -880,
+        -240
+      ],
+      "id": "01a3726d-b3f8-4744-ac3e-1010af211d84",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0B31BEV3QV",
+          "mode": "list",
+          "cachedResultName": "all-ai-automation-inbound-message"
+        },
+        "text": "=🚨 {{$node[\"Code in JavaScript\"].json.priority}} PRIORITY EMAIL\n\n📧 From: {{$node[\"Mail Content Structure\"].json.from}}\n📌 Subject: {{$node[\"Mail Content Structure\"].json.subject}}\n\n🧠 Summary:\n{{$node[\"Code in JavaScript\"].json.summary}}\n\n---------***************----------------\n\n🚨 *HIGH PRIORITY EMAIL*\n\n📧 From: {{$json.from}}\n📌 Subject: {{$json.subject}}\n🕒 Received: {{ new Date().toLocaleString() }}\n\n⏱ Action Required: Immediate attention needed\n\n🧠 *Summary:*\n{{$json.summary}}\n\n💡 *Suggested Action:*\nRespond or fulfill the request",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        -272,
+        -480
+      ],
+      "id": "1f399f6e-5e61-4d40-bdb6-5b7445a7dfbd",
+      "name": "Send a message1",
+      "webhookId": "b15bc5e4-299b-40bc-a7d9-bb479872c4c9",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "9zMNEK3rLNkJBTXT",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0B31BEV3QV",
+          "mode": "list",
+          "cachedResultName": "all-ai-automation-inbound-message"
+        },
+        "text": "=New Email Alert\nPriority: {{ $json.priority }}\nFrom: {{ $json.from }} ({{ $json.email }})\nSubject: {{ $json.subject }}\nSummary: {{ $json.summary }}\nAction: {{ $json.suggested_action }}",
+        "otherOptions": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        640,
+        656
+      ],
+      "id": "974efb12-841f-41d7-b8ed-622f27f69cef",
+      "name": "Send a message",
+      "webhookId": "20e1b832-048c-412d-8a2e-708019b1379e",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "9zMNEK3rLNkJBTXT",
+          "name": "Slack account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "",
+                    "rightValue": "",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "41130244-e967-47d3-9972-879f239ad0a1"
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        176,
+        656
+      ],
+      "id": "024dd1b4-df74-4c80-995a-ecd4da118770",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "mode": "expression",
+        "numberOutputs": 3,
+        "output": "={{\n  ($json.priority || \"\").toLowerCase() === \"high\" ? 0 :\n  ($json.priority || \"\").toLowerCase() === \"medium\" ? 1 :\n  2\n}}"
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        -576,
+        -256
+      ],
+      "id": "7e8c4745-a138-45df-85e7-b0e84fed669c",
+      "name": "Switch1"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -224,
+        -80
+      ],
+      "id": "a0995f46-a2b6-4529-b09c-f46179faffbf",
+      "name": "No Operation, do nothing"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4O-MINI"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are an expert assistant replying to emails.\n\nYour job is to directly and completely answer the request in the email.\n\nSTRICT RULES:\n- Do NOT acknowledge receipt\n- Do NOT say \"please find attached\" unless attachment exists\n- Do NOT refer to internal systems or knowledge base\n- Do NOT suggest where to find the answer\n\nINSTEAD:\n- Provide the actual explanation, steps, or information requested\n- Be clear, practical, and actionable\n- Use structured formatting if helpful\n\nReturn ONLY the email body.\n\n"
+            },
+            {
+              "content": "=Subject: {{ $('Code in JavaScript').item.json.subject }}\n\nEmail:\n{{ $('Code in JavaScript').item.json.name }}\n\nSummary:\n{{ $('Code in JavaScript').item.json.summary }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        -32,
+        -480
+      ],
+      "id": "67aa4130-abed-4426-a766-a26bb49f82bf",
+      "name": "Message a model1",
+      "credentials": {
+        "openAiApi": {
+          "id": "bxpGM01VtW3A4YBc",
+          "name": "OpenAI account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. Get raw AI response\nconst reply = $json.output?.[0]?.content?.[0]?.text || \"\";\n\n// 2. Get original email\nconst original = $items(\"Mail Content Structure\")?.[0]?.json || {};\n\n// 3. Extract subject\nlet subject = original.subject || \"Your Email\";\n\nconst subjectMatch = reply.match(/Subject:(.*)/i);\nif (subjectMatch) {\n  subject = subjectMatch[1].trim();\n}\n\n// 4. Clean body (remove Subject line if present)\nlet body = reply.replace(/Subject:.*\\n/i, \"\").trim();\n\n// 5. Add signature\nbody = body\n  .replace(/\\n{3,}/g, \"\\n\\n\") // clean extra spacing\n  .trim() + \"\\n\\n--\\nMy Assistance\";\n\n// 6. Final output\nreturn [\n  {\n    json: {\n      to: original.from,\n      subject: \"Re: \" + subject,\n      body: body\n    }\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        320,
+        -480
+      ],
+      "id": "cc217887-c9eb-4b57-bd7b-3cf6a149daec",
+      "name": "Extract Email Reply"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        672,
+        -496
+      ],
+      "id": "bedc54ad-7d8b-4731-80b8-1e0171d221a2",
+      "name": "Send a message2",
+      "webhookId": "84775d55-ef49-46b8-8cdf-4cd91e840a6e",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "fnAZzORXXZOEZ4GW",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "sendAndWait",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "value": "C0B31BEV3QV",
+          "mode": "list",
+          "cachedResultName": "all-ai-automation-inbound-message"
+        },
+        "message": "={\n  \"blocks\": [\n    {\n      \"type\": \"section\",\n      \"text\": {\n        \"type\": \"mrkdwn\",\n        \"text\": \"🚨 *HIGH PRIORITY EMAIL*\\n\\n📧 *From:* {{ $('Code in JavaScript').item.json.from }}\\n📌 *Subject:* {{$json.subject}}\\n\\n🧠 *Summary:*\\n{{ $('Code in JavaScript').item.json.summary }}\\n\\n✉️ *Proposed Reply:*\\n{{$json.body}}\"\n      }\n    },\n    {\n      \"type\": \"actions\",\n      \"elements\": [\n        {\n          \"type\": \"button\",\n          \"text\": {\n            \"type\": \"plain_text\",\n            \"text\": \"✅ Approve & Send\"\n          },\n          \"style\": \"primary\",\n          \"value\": \"approve|{{$json.from}}|{{$json.subject}}|{{$json.body}}\"\n        },\n        {\n          \"type\": \"button\",\n          \"text\": {\n            \"type\": \"plain_text\",\n            \"text\": \"❌ Reject\"\n          },\n          \"style\": \"danger\",\n          \"value\": \"reject\"\n        }\n      ]\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.4,
+      "position": [
+        528,
+        -480
+      ],
+      "id": "f8890371-f780-46ed-b925-63fb857bf18f",
+      "name": "Send message and wait for response",
+      "webhookId": "db74b618-5ee5-4727-a5a7-01b4700a4b8b",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "9zMNEK3rLNkJBTXT",
+          "name": "Slack account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "Mail Content Structure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mail Content Structure": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anthropic Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "Formatting of Claude Output",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Formatting of Claude Output": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Switch1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Send a message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch1": {
+      "main": [
+        [
+          {
+            "node": "Send a message1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [],
+        [
+          {
+            "node": "No Operation, do nothing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a message1": {
+      "main": [
+        [
+          {
+            "node": "Message a model1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model1": {
+      "main": [
+        [
+          {
+            "node": "Extract Email Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Email Reply": {
+      "main": [
+        [
+          {
+            "node": "Send message and wait for response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "ff84b600-2335-42d5-82d7-47ce496ee374",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "665dfdbe620fa18209792bbb3932aece5e549b87835c0327a0dc6e1cdff414e4"
+  },
+  "id": "8CvuMhHswBxWGH4Q",
+  "tags": [
+    {
+      "updatedAt": "2026-05-16T20:44:02.502Z",
+      "createdAt": "2026-05-16T20:44:02.502Z",
+      "id": "wvLlEs5585rrvJld",
+      "name": "Updated work flow"
+    }
+  ]
+}
